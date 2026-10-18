@@ -49,12 +49,13 @@
 // ===== НАСТРОЙКИ =====
 // share = ваша доля позиции в % (нужна только для средневзвешенного APY, в строках не показывается)
 const POSITIONS = [
-  {chainId:43114, symbol:'USDC', share:41.39},
-  {chainId:10,    symbol:'USDC', share:11.92},
-  {chainId:1,     symbol:'USDC', share:11.92},
-  {chainId:1,     symbol:'USDT', share:17.84},
-  {chainId:137,   symbol:'USDT', alt:['USDT0','USD₮0'], share:11.93},
-  {chainId:43114, symbol:'USDT', share:4.79},
+  // track = окончание ссылки на aavetracker.com/markets/<сеть>/<track>/
+  {chainId:43114, symbol:'USDC', track:'usdc',       share:41.39},
+  {chainId:10,    symbol:'USDC', track:'usdc-0b2c',  share:11.92},
+  {chainId:1,     symbol:'USDC', track:'usdc',       share:11.92},
+  {chainId:1,     symbol:'USDT', track:'usdt',       share:10.69},
+  {chainId:137,   symbol:'USDT', track:'usdt0', alt:['USDT0','USD₮0'], share:11.93},
+  {chainId:43114, symbol:'USDT', track:'usdt',       share:11.94},
 ];
 const CHAINS = {
   1:     {name:'Ethereum',  slug:'ethereum',  market:'proto_mainnet_v3',   bg:'#627eea', lb:'ETH'},
@@ -179,8 +180,7 @@ async function loadAll(){
 
 function link(r){
   const ch = CHAINS[r.chainId];
-  if(r.address) return `${APP}/reserve-overview/?underlyingAsset=${encodeURIComponent(r.address.toLowerCase())}&marketName=${ch.market}`;
-  return `${APP}/markets/?marketName=${ch.market}`;
+  return `https://aavetracker.com/markets/${ch.slug}/${r.track}/`;
 }
 function tokenSrcs(r){
   const a = (r.shown||r.symbol).toLowerCase().replace(/[^a-z0-9]/g,'');
