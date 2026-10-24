@@ -1,0 +1,30 @@
+name: record-apy
+
+on:
+  schedule:
+    - cron: '7 * * * *'   # каждый час в :07
+  workflow_dispatch:       # кнопка «Run workflow» для ручного запуска
+
+permissions:
+  contents: write
+
+concurrency:
+  group: record-apy
+
+jobs:
+  record:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Записать APY
+        run: node record.mjs
+      - name: Сохранить в репозиторий
+        run: |
+          git config user.name "apy-recorder"
+          git config user.email "apy-recorder@users.noreply.github.com"
+          git add data/history.json
+          git diff --cached --quiet || git commit -m "record apy"
+          git push
