@@ -18,7 +18,9 @@
   .row.warn{border-left-color:var(--warn)} .row.bad{border-left-color:var(--bad)} .row.na{border-left-color:#555}
   a.asset{display:flex;align-items:center;gap:12px;color:inherit;text-decoration:none;min-width:0;flex:1}
   .ico{position:relative;width:44px;height:44px;flex:none}
-  .tok,.ico>.fb{width:44px;height:44px;border-radius:50%;display:block}
+  .tok,.ico>.fb{width:44px;height:44px;border-radius:50%}
+  .tok{display:block}
+  .ico>.fb{display:flex}
   .chain{position:absolute;top:-5px;right:-5px;width:20px;height:20px;border-radius:50%;background:var(--card);border:2px solid var(--card);overflow:hidden;display:flex}
   .chain img,.chain .fb{width:100%;height:100%;border-radius:50%;display:flex}
   .fb{align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:15px}
@@ -33,10 +35,12 @@
   .avail{color:var(--mut);font-size:12px;margin-top:3px}
   .fact{flex-basis:100%;display:flex;align-items:center;gap:10px;flex-wrap:wrap;border-top:1px solid #2a2a2a;padding-top:8px;font-size:13px;color:var(--mut)}
   .fact b{color:var(--text)} .fact b.up{color:var(--ok)} .fact b.dn{color:var(--bad)}
-  input.dt{background:#111;color:var(--text);border:1px solid #333;border-radius:8px;padding:4px 6px;font:inherit;font-size:13px;color-scheme:dark}
   .err{color:var(--bad);font-size:14px;margin:8px 0;white-space:pre-wrap}
-  .sum{margin-top:12px;color:var(--mut);font-size:13px}
-  .sum+.sum{margin-top:4px}
+  .stats{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px}
+  .stat{background:var(--card);border-radius:12px;padding:12px 14px}
+  .stat .lbl{color:var(--mut);font-size:12px}
+  .stat .val{font-size:26px;font-weight:700;margin-top:2px}
+  .stat .note{color:var(--mut);font-size:12px;margin-top:2px;min-height:15px}
 </style>
 </head>
 <body>
@@ -44,11 +48,13 @@
   <h1>Aave: APY и утилизация</h1>
   <button id="btn">Обновить</button>
 </header>
+<div class="stats">
+  <div class="stat"><div class="lbl">Средний APY сейчас</div><div class="val" id="avg">—</div><div class="note">по вашим долям</div></div>
+  <div class="stat"><div class="lbl">Реальный APY</div><div class="val" id="real">—</div><div class="note" id="realnote"></div></div>
+</div>
 <div class="meta" id="meta">Загрузка…</div>
 <div id="list"></div>
 <div class="err" id="err"></div>
-<div class="sum" id="sum"></div>
-<div class="sum" id="sum2"></div>
 
 <script>
 // ===== НАСТРОЙКИ =====
@@ -77,11 +83,11 @@ const REFRESH_MS = 60*60*1000; // раз в час
 const API = 'https://api.v3.aave.com/graphql';
 const APP = 'https://app.aave.com';
 const HISTORY_URL = 'data/history.json'; // его раз в час пополняет record.mjs
+const START_DATE = '2026-10-24'; // с этой даты считается реальный APY (сегодня, когда включили учёт)
 // =====================
 
 const $ = id => document.getElementById(id);
 const KEY = 'aave-monitor-cache-v3';
-const DATES_KEY = 'aave-start-dates-v1'; // даты вкладов хранятся только в браузере телефона
 let HIST = null, LAST = null;
 
 // Варианты запроса: от полного к минимальному (если какое-то поле не поддерживается)
@@ -106,10 +112,6 @@ function money(n){
   if(n>=1e9) return '$'+(n/1e9).toFixed(2)+'B';
   if(n>=1e6) return '$'+(n/1e6).toFixed(1)+'M';
   return '$'+Math.round(n/1e3)+'K';
-}
-function todayStr(){
-  const d = new Date();
-  return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
 }
 function fmtDate(ms){ return new Date(ms).toLocaleDateString('ru-RU',{day:'2-digit',month:'2-digit'}); }
 
@@ -234,32 +236,21 @@ function realYield(hist, key, startStr, liveApy, nowMs){
   };
 }
 
-function getDates(){ try{ return JSON.parse(localStorage.getItem(DATES_KEY)||'{}'); }catch(e){ return {}; } }
-function setDate(k, v){
-  const d = getDates();
-  if(v) d[k] = v; else delete d[k];
-  try{ localStorage.setItem(DATES_KEY, JSON.stringify(d)); }catch(e){}
-}
 const posKey = r => r.chainId+'-'+r.symbol;
 
 function factHtml(r){
-  const key = posKey(r);
-  const d = getDates()[key] || '';
-  const input = `<input type="date" class="dt" data-k="${esc(key)}" value="${esc(d)}" max="${todayStr()}">`;
   let text;
-  if(!HIST || !HIST.rows || !HIST.rows.length) text = 'история ещё не накоплена';
-  else if(!d) text = 'укажите дату вклада';
+  if(!HIST || !HIST.rows || !HIST.rows.length) text = 'реально: история ещё не накоплена';
   else {
-    const y = realYield(HIST, key, d, r.apy, Date.now());
-    if(!y) text = 'нет данных за этот период';
+    const y = realYield(HIST, posKey(r), START_DATE, r.apy, Date.now());
+    if(!y) text = 'реально: нет данных за этот период';
     else {
       const up = y.growthPct >= 0;
-      text = `<b class="${up?'up':'dn'}">${up?'+':''}${y.growthPct.toFixed(3)}%</b> за ${y.days.toFixed(1)} дн`;
+      text = `реально: <b class="${up?'up':'dn'}">${up?'+':''}${y.growthPct.toFixed(3)}%</b> за ${y.days.toFixed(1)} дн`;
       if(y.apyAnn!=null) text += ` · <b>${y.apyAnn.toFixed(2)}%</b> годовых`;
-      if(y.late) text += ` · история с ${fmtDate(y.from)}`;
     }
   }
-  return `<div class="fact">${input}<span>${text}</span></div>`;
+  return `<div class="fact"><span>${text}</span></div>`;
 }
 
 function link(r){
@@ -290,15 +281,6 @@ document.addEventListener('error', e=>{
   el.replaceWith(fb);
 }, true);
 
-// смена даты вклада: сохраняем и пересчитываем
-document.addEventListener('change', e=>{
-  const el = e.target;
-  if(el && el.classList && el.classList.contains('dt')){
-    setDate(el.dataset.k, el.value);
-    if(LAST) render(LAST.rows, LAST.ts, LAST.stale);
-  }
-});
-
 function render(rows, ts, stale){
   LAST = {rows, ts, stale};
   $('list').innerHTML = rows.map(r=>{
@@ -328,17 +310,26 @@ function render(rows, ts, stale){
   const f = rows.filter(r=>r.found && r.apy!=null);
   const w = f.reduce((s,r)=>s+r.share,0);
   const avg = w ? f.reduce((s,r)=>s+r.apy*r.share,0)/w : null;
-  $('sum').textContent = avg!=null ? `Средневзвешенный APY сейчас: ${fmt(avg)}%` : '';
+  $('avg').textContent = avg!=null ? fmt(avg)+'%' : '—';
 
-  // средневзвешенный реальный APY по позициям, у которых есть дата вклада и хотя бы сутки истории
-  const dates = getDates();
-  let ws = 0, wa = 0, n = 0;
+  // реальный APY портфеля: средневзвешенный по долям, считается с START_DATE
+  let ws = 0, wg = 0, wa = 0, n = 0, ann = 0, days = 0;
   for(const r of rows){
-    if(!r.found || !dates[posKey(r)]) continue;
-    const y = realYield(HIST, posKey(r), dates[posKey(r)], r.apy, Date.now());
-    if(y && y.apyAnn!=null){ ws += r.share; wa += r.share*y.apyAnn; n++; }
+    if(!r.found) continue;
+    const y = realYield(HIST, posKey(r), START_DATE, r.apy, Date.now());
+    if(!y) continue;
+    ws += r.share; wg += r.share*y.growthPct; n++; days = y.days;
+    if(y.apyAnn!=null){ wa += r.share*y.apyAnn; ann++; }
   }
-  $('sum2').textContent = n ? `Средневзвешенный реальный APY: ${fmt(wa/ws)}% (по ${n} из ${rows.length} позиций)` : '';
+  if(!n){
+    $('real').textContent = '—';
+    $('realnote').textContent = 'история ещё не накоплена';
+  } else {
+    const g = wg/ws;
+    const gtxt = `${g>=0?'+':''}${g.toFixed(3)}% за ${days.toFixed(1)} дн`;
+    if(ann===n){ $('real').textContent = fmt(wa/ws)+'%'; $('realnote').textContent = gtxt; }
+    else { $('real').textContent = '—'; $('realnote').textContent = gtxt+' · годовая цифра через сутки'; }
+  }
 
   $('meta').textContent = (stale?'Данные из кэша, ':'Обновлено ')+new Date(ts).toLocaleString('ru-RU');
 }
