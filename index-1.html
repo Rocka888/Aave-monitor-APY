@@ -14,11 +14,13 @@
   button{background:var(--blue);color:#fff;border:0;border-radius:10px;padding:10px 16px;font-size:15px;font-weight:600}
   button:disabled{opacity:.5}
   .meta{color:var(--mut);font-size:13px;margin-bottom:12px}
-  .row{background:var(--card);border-radius:12px;padding:12px 14px;margin-bottom:8px;display:flex;align-items:center;justify-content:space-between;gap:10px;border-left:4px solid var(--ok)}
+  .row{background:var(--card);border-radius:12px;padding:12px 14px;margin-bottom:8px;display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px;border-left:4px solid var(--ok)}
   .row.warn{border-left-color:var(--warn)} .row.bad{border-left-color:var(--bad)} .row.na{border-left-color:#555}
   a.asset{display:flex;align-items:center;gap:12px;color:inherit;text-decoration:none;min-width:0;flex:1}
   .ico{position:relative;width:44px;height:44px;flex:none}
-  .tok,.ico>.fb{width:44px;height:44px;border-radius:50%;display:block}
+  .tok,.ico>.fb{width:44px;height:44px;border-radius:50%}
+  .tok{display:block}
+  .ico>.fb{display:flex}
   .chain{position:absolute;top:-5px;right:-5px;width:20px;height:20px;border-radius:50%;background:var(--card);border:2px solid var(--card);overflow:hidden;display:flex}
   .chain img,.chain .fb{width:100%;height:100%;border-radius:50%;display:flex}
   .fb{align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:15px}
@@ -31,8 +33,14 @@
   .right{text-align:right;flex:none}
   .util{font-size:14px;font-weight:600}
   .avail{color:var(--mut);font-size:12px;margin-top:3px}
+  .fact{flex-basis:100%;display:flex;align-items:center;gap:10px;flex-wrap:wrap;border-top:1px solid #2a2a2a;padding-top:8px;font-size:13px;color:var(--mut)}
+  .fact b{color:var(--text)} .fact b.up{color:var(--ok)} .fact b.dn{color:var(--bad)}
   .err{color:var(--bad);font-size:14px;margin:8px 0;white-space:pre-wrap}
-  .sum{margin-top:12px;color:var(--mut);font-size:13px}
+  .stats{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px}
+  .stat{background:var(--card);border-radius:12px;padding:12px 14px}
+  .stat .lbl{color:var(--mut);font-size:12px}
+  .stat .val{font-size:26px;font-weight:700;margin-top:2px}
+  .stat .note{color:var(--mut);font-size:12px;margin-top:2px;min-height:15px}
 </style>
 </head>
 <body>
@@ -40,21 +48,25 @@
   <h1>Aave: APY и утилизация</h1>
   <button id="btn">Обновить</button>
 </header>
+<div class="stats">
+  <div class="stat"><div class="lbl">Средний APY сейчас</div><div class="val" id="avg">—</div><div class="note">по вашим долям</div></div>
+  <div class="stat"><div class="lbl">Реальный APY</div><div class="val" id="real">—</div><div class="note" id="realnote"></div></div>
+</div>
 <div class="meta" id="meta">Загрузка…</div>
 <div id="list"></div>
 <div class="err" id="err"></div>
-<div class="sum" id="sum"></div>
 
 <script>
 // ===== НАСТРОЙКИ =====
 // share = ваша доля позиции в % (нужна только для средневзвешенного APY, в строках не показывается)
+// track = окончание ссылки на aavetracker.com/markets/<сеть>/<track>/
 const POSITIONS = [
-  {chainId:43114, symbol:'USDC', share:41.39},
-  {chainId:10,    symbol:'USDC', share:11.92},
-  {chainId:1,     symbol:'USDC', share:11.92},
-  {chainId:1,     symbol:'USDT', share:17.84},
-  {chainId:137,   symbol:'USDT', alt:['USDT0','USD₮0'], share:11.93},
-  {chainId:43114, symbol:'USDT', share:4.79},
+  {chainId:43114, symbol:'USDC', track:'usdc',       share:41.39},
+  {chainId:10,    symbol:'USDC', track:'usdc-0b2c',  share:11.92},
+  {chainId:1,     symbol:'USDC', track:'usdc',       share:11.92},
+  {chainId:1,     symbol:'USDG', track:'usdg',       share:10.69},
+  {chainId:137,   symbol:'USDT', track:'usdt0', alt:['USDT0','USD₮0'], share:11.93},
+  {chainId:43114, symbol:'USDT', track:'usdt',       share:11.94},
 ];
 const CHAINS = {
   1:     {name:'Ethereum',  slug:'ethereum',  market:'proto_mainnet_v3',   bg:'#627eea', lb:'ETH'},
@@ -70,10 +82,13 @@ const APY_ALERT = {'43114 USDC': 4.0}; // жёлтый, если APY ниже п
 const REFRESH_MS = 60*60*1000; // раз в час
 const API = 'https://api.v3.aave.com/graphql';
 const APP = 'https://app.aave.com';
+const HISTORY_URL = 'data/history.json'; // его раз в час пополняет record.mjs
+const START_DATE = '2026-10-24'; // с этой даты считается реальный APY (сегодня, когда включили учёт)
 // =====================
 
 const $ = id => document.getElementById(id);
 const KEY = 'aave-monitor-cache-v3';
+let HIST = null, LAST = null;
 
 // Варианты запроса: от полного к минимальному (если какое-то поле не поддерживается)
 const VARIANTS = [
@@ -82,7 +97,7 @@ const VARIANTS = [
   `supplyInfo{apy{formatted} total{value}} borrowInfo{total{amount{value}} availableLiquidity{amount{value} usd}}`,
   `supplyInfo{apy{formatted}} borrowInfo{availableLiquidity{amount{value} usd}}`,
 ];
-// Дополнительные данные: адреса токенов (для ссылок) и иконки. Если поля нет, страница работает без них.
+// Дополнительные данные: адреса токенов и иконки. Если поля нет, страница работает без них.
 const META_VARIANTS = [
   {chainIcon:true,  fields:'underlyingToken{symbol address imageUrl}'},
   {chainIcon:false, fields:'underlyingToken{symbol address imageUrl}'},
@@ -98,6 +113,7 @@ function money(n){
   if(n>=1e6) return '$'+(n/1e6).toFixed(1)+'M';
   return '$'+Math.round(n/1e3)+'K';
 }
+function fmtDate(ms){ return new Date(ms).toLocaleDateString('ru-RU',{day:'2-digit',month:'2-digit'}); }
 
 async function gql(query){
   const res = await fetch(API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query})});
@@ -139,6 +155,16 @@ async function fetchMeta(chainId){
   return {chainIcon:null, tokens:{}};
 }
 
+// история ставок, которую пишет record.mjs; если файла ещё нет, вернёт null
+async function fetchHistory(){
+  try{
+    const res = await fetch(HISTORY_URL+'?'+Date.now(), {cache:'no-store'});
+    if(!res.ok) return null;
+    const j = await res.json();
+    return (j && Array.isArray(j.keys) && Array.isArray(j.rows)) ? j : null;
+  }catch(e){ return null; }
+}
+
 function parseReserve(r){
   const s = r.supplyInfo||{}, b = r.borrowInfo||{};
   const apy = num(s.apy && s.apy.formatted);
@@ -177,10 +203,59 @@ async function loadAll(){
   });
 }
 
+// ===== Реальная доходность с даты вклада =====
+// Ставка между двумя записями считается постоянной (по левой записи), прирост за отрезок:
+// (1 + APY)^(время / год). Последний отрезок, от последней записи до «сейчас», идёт по живой ставке.
+function realYield(hist, key, startStr, liveApy, nowMs){
+  if(!hist || !startStr) return null;
+  const col = hist.keys.indexOf(key);
+  const rows = hist.rows;
+  if(col < 0 || !rows.length) return null;
+  const S = new Date(startStr+'T00:00:00').getTime();
+  const YEAR = 365*86400*1000;
+  const t0 = rows[0][0]*1000;
+  const from = Math.max(S, t0);
+  if(!(from < nowMs)) return null;
+  let factor = 1, cursor = from, apyCur = null;
+  for(const row of rows){
+    const t = row[0]*1000;
+    const a = row[col+1];
+    if(t <= from){ if(a!=null) apyCur = a; continue; }
+    if(apyCur!=null) factor *= Math.pow(1+apyCur/100, (t-cursor)/YEAR);
+    cursor = t;
+    if(a!=null) apyCur = a;
+  }
+  const live = liveApy!=null ? liveApy : apyCur;
+  if(live!=null) factor *= Math.pow(1+live/100, (nowMs-cursor)/YEAR);
+  const span = nowMs - from;
+  return {
+    growthPct: (factor-1)*100,
+    days: span/86400000,
+    apyAnn: span >= 86400000 ? (Math.pow(factor, YEAR/span)-1)*100 : null,
+    from, late: S < t0
+  };
+}
+
+const posKey = r => r.chainId+'-'+r.symbol;
+
+function factHtml(r){
+  let text;
+  if(!HIST || !HIST.rows || !HIST.rows.length) text = 'реально: история ещё не накоплена';
+  else {
+    const y = realYield(HIST, posKey(r), START_DATE, r.apy, Date.now());
+    if(!y) text = 'реально: нет данных за этот период';
+    else {
+      const up = y.growthPct >= 0;
+      text = `реально: <b class="${up?'up':'dn'}">${up?'+':''}${y.growthPct.toFixed(3)}%</b> за ${y.days.toFixed(1)} дн`;
+      if(y.apyAnn!=null) text += ` · <b>${y.apyAnn.toFixed(2)}%</b> годовых`;
+    }
+  }
+  return `<div class="fact"><span>${text}</span></div>`;
+}
+
 function link(r){
   const ch = CHAINS[r.chainId];
-  if(r.address) return `${APP}/reserve-overview/?underlyingAsset=${encodeURIComponent(r.address.toLowerCase())}&marketName=${ch.market}`;
-  return `${APP}/markets/?marketName=${ch.market}`;
+  return `https://aavetracker.com/markets/${ch.slug}/${r.track}/`;
 }
 function tokenSrcs(r){
   const a = (r.shown||r.symbol).toLowerCase().replace(/[^a-z0-9]/g,'');
@@ -207,6 +282,7 @@ document.addEventListener('error', e=>{
 }, true);
 
 function render(rows, ts, stale){
+  LAST = {rows, ts, stale};
   $('list').innerHTML = rows.map(r=>{
     const ch = CHAINS[r.chainId];
     const key = r.chainId+' '+r.symbol;
@@ -227,25 +303,49 @@ function render(rows, ts, stale){
         </span>
       </a>
       <div class="right"><div class="util">util ${fmt(r.util,1)}%</div><div class="avail">свободно ${money(r.availUsd)}</div></div>
+      ${factHtml(r)}
     </div>`;
   }).join('');
+
   const f = rows.filter(r=>r.found && r.apy!=null);
   const w = f.reduce((s,r)=>s+r.share,0);
   const avg = w ? f.reduce((s,r)=>s+r.apy*r.share,0)/w : null;
-  $('sum').textContent = avg!=null ? `Средневзвешенный APY: ${fmt(avg)}%` : '';
+  $('avg').textContent = avg!=null ? fmt(avg)+'%' : '—';
+
+  // реальный APY портфеля: средневзвешенный по долям, считается с START_DATE
+  let ws = 0, wg = 0, wa = 0, n = 0, ann = 0, days = 0;
+  for(const r of rows){
+    if(!r.found) continue;
+    const y = realYield(HIST, posKey(r), START_DATE, r.apy, Date.now());
+    if(!y) continue;
+    ws += r.share; wg += r.share*y.growthPct; n++; days = y.days;
+    if(y.apyAnn!=null){ wa += r.share*y.apyAnn; ann++; }
+  }
+  if(!n){
+    $('real').textContent = '—';
+    $('realnote').textContent = 'история ещё не накоплена';
+  } else {
+    const g = wg/ws;
+    const gtxt = `${g>=0?'+':''}${g.toFixed(3)}% за ${days.toFixed(1)} дн`;
+    if(ann===n){ $('real').textContent = fmt(wa/ws)+'%'; $('realnote').textContent = gtxt; }
+    else { $('real').textContent = '—'; $('realnote').textContent = gtxt+' · годовая цифра через сутки'; }
+  }
+
   $('meta').textContent = (stale?'Данные из кэша, ':'Обновлено ')+new Date(ts).toLocaleString('ru-RU');
 }
 
 async function load(){
   $('btn').disabled = true; $('err').textContent='';
   try{
-    const rows = await loadAll();
+    const [rows, hist] = await Promise.all([loadAll(), fetchHistory()]);
+    HIST = hist;
     const ts = Date.now();
     try{ localStorage.setItem(KEY, JSON.stringify({ts, rows})); }catch(e){}
     render(rows, ts, false);
   }catch(e){
     $('err').textContent = 'Не удалось обновить: '+e.message;
     try{
+      if(!HIST) HIST = await fetchHistory();
       const c = JSON.parse(localStorage.getItem(KEY)||'null');
       if(c) render(c.rows, c.ts, true); else $('meta').textContent='Нет данных';
     }catch(_){}
