@@ -1,4 +1,4 @@
-name: record-apy
+name: .github/workflows/record.yml
 
 on:
   schedule:
