@@ -49,7 +49,7 @@
   <button id="btn">Обновить</button>
 </header>
 <div class="stats">
-  <div class="stat"><div class="lbl">Средний APY сейчас</div><div class="val" id="avg">—</div><div class="note"></div></div>
+  <div class="stat"><div class="lbl">Средний APY сейчас</div><div class="val" id="avg">—</div></div>
   <div class="stat"><div class="lbl">Реальный APY</div><div class="val" id="real">—</div><div class="note" id="realnote"></div></div>
 </div>
 <div class="meta" id="meta">Загрузка…</div>
@@ -83,12 +83,14 @@ const REFRESH_MS = 60*60*1000; // раз в час
 const API = 'https://api.v3.aave.com/graphql';
 const APP = 'https://app.aave.com';
 const HISTORY_URL = 'data/history.json'; // его раз в час пополняет record.mjs
+// прямой адрес файла в репозитории: обновляется сразу, не ждёт пересборки сайта (ветка main)
+const HISTORY_RAW = 'https://raw.githubusercontent.com/Rocka888/Aave-monitor-APY/main/data/history.json';
 const START_DATE = '2026-10-24'; // с этой даты считается реальный APY (сегодня, когда включили учёт)
 // =====================
 
 const $ = id => document.getElementById(id);
 const KEY = 'aave-monitor-cache-v3';
-let HIST = null, LAST = null;
+let HIST = null, LAST = null, HIST_ERR = '';
 
 // Варианты запроса: от полного к минимальному (если какое-то поле не поддерживается)
 const VARIANTS = [
@@ -157,12 +159,23 @@ async function fetchMeta(chainId){
 
 // история ставок, которую пишет record.mjs; если файла ещё нет, вернёт null
 async function fetchHistory(){
-  try{
-    const res = await fetch(HISTORY_URL+'?'+Date.now(), {cache:'no-store'});
-    if(!res.ok) return null;
-    const j = await res.json();
-    return (j && Array.isArray(j.keys) && Array.isArray(j.rows)) ? j : null;
-  }catch(e){ return null; }
+  const errs = [];
+  for(const u of [HISTORY_RAW, HISTORY_URL]){
+    try{
+      const res = await fetch(u+'?'+Date.now(), {cache:'no-store'});
+      if(!res.ok){ errs.push(res.status); continue; }
+      const j = await res.json();
+      if(j && Array.isArray(j.keys) && Array.isArray(j.rows)){
+        HIST_ERR = j.rows.length ? '' : 'файл истории пуст';
+        return j;
+      }
+      errs.push('формат');
+    }catch(e){ errs.push('сеть'); }
+  }
+  HIST_ERR = errs.includes(404)
+    ? 'файл истории не найден (404): запись ещё не запускалась'
+    : 'не удалось загрузить файл истории';
+  return null;
 }
 
 function parseReserve(r){
@@ -240,7 +253,7 @@ const posKey = r => r.chainId+'-'+r.symbol;
 
 function factHtml(r){
   let text;
-  if(!HIST || !HIST.rows || !HIST.rows.length) text = 'реально: история ещё не накоплена';
+  if(!HIST || !HIST.rows || !HIST.rows.length) text = 'реально: '+(HIST_ERR || 'история ещё не накоплена');
   else {
     const y = realYield(HIST, posKey(r), START_DATE, r.apy, Date.now());
     if(!y) text = 'реально: нет данных за этот период';
@@ -323,7 +336,7 @@ function render(rows, ts, stale){
   }
   if(!n){
     $('real').textContent = '—';
-    $('realnote').textContent = 'история ещё не накоплена';
+    $('realnote').textContent = HIST_ERR || 'история ещё не накоплена';
   } else {
     const g = wg/ws;
     const gtxt = `${g>=0?'+':''}${g.toFixed(3)}% за ${days.toFixed(1)} дн`;
