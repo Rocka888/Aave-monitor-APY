@@ -52,20 +52,22 @@ async function fetchChain(chainId) {
   throw lastErr;
 }
 
-// та же логика выбора, что на странице: нужный токен, не замороженный, самый крупный пул
+// та же логика выбора, что на странице: нужный токен; активный пул в приоритете, затем самый крупный.
+// Замороженные и приостановленные пулы тоже пишем: проценты в них продолжают начисляться.
 function pick(reserves, names) {
   const want = names.map(s => s.toUpperCase());
   const c = reserves
-    .filter(r => r.underlyingToken && want.includes(r.underlyingToken.symbol.toUpperCase()) && !r.isFrozen && !r.isPaused)
+    .filter(r => r.underlyingToken && want.includes(r.underlyingToken.symbol.toUpperCase()))
     .map(r => {
       const s = r.supplyInfo || {}, b = r.borrowInfo || {};
       return {
         apy: num(s.apy && s.apy.formatted),
         size: num(s.total && s.total.value) || num(b.availableLiquidity && b.availableLiquidity.usd) || 0,
+        off: (r.isPaused ? 2 : 0) + (r.isFrozen ? 1 : 0),
       };
     })
     .filter(x => x.apy != null)
-    .sort((a, b) => b.size - a.size);
+    .sort((a, b) => (a.off - b.off) || (b.size - a.size));
   return c.length ? c[0].apy : null;
 }
 
