@@ -127,14 +127,26 @@ async function gql(query){
   return j.data;
 }
 
+// адреса основных (Core) рынков Aave V3: именно их ставки вы видите в приложении
+const CORE_POOL = {
+  1:     '0x87870bca3f3fd6335c3f4ce8392d69350b4fa4e2',
+  43114: '0x794a61358d6845594f94dc1db02a252b5b4814ad',
+  10:    '0x794a61358d6845594f94dc1db02a252b5b4814ad',
+  137:   '0x794a61358d6845594f94dc1db02a252b5b4814ad',
+  42161: '0x794a61358d6845594f94dc1db02a252b5b4814ad',
+};
+const isCore = (c, chainId) => !!(c.mkt && (c.mkt.address === CORE_POOL[chainId] || /core/i.test(c.mkt.name||'')));
+
 async function fetchChain(chainId){
   let lastErr;
   for(const v of VARIANTS){
-    try{
-      const q = `{ markets(request:{chainIds:[${chainId}]}) { reserves { underlyingToken{symbol} ${v} isFrozen isPaused } } }`;
-      const d = await gql(q);
-      return d.markets.flatMap(m=>m.reserves);
-    }catch(e){ lastErr = e; }
+    for(const mf of ['name address','']){ // сначала с названием и адресом рынка, если API их не отдаёт, без них
+      try{
+        const q = `{ markets(request:{chainIds:[${chainId}]}) { ${mf} reserves { underlyingToken{symbol} ${v} isFrozen isPaused } } }`;
+        const d = await gql(q);
+        return d.markets.flatMap(m=>m.reserves.map(r=>({...r, _mkt:{name:m.name||'', address:String(m.address||'').toLowerCase()}})));
+      }catch(e){ lastErr = e; }
+    }
   }
   throw lastErr;
 }
@@ -193,7 +205,7 @@ function parseReserve(r){
   } else if(supplied && borrowed!=null){
     util = 100*borrowed/supplied;
   }
-  return {apy, util, availUsd, supplied, frozen:!!r.isFrozen, paused:!!r.isPaused, sym:(r.underlyingToken&&r.underlyingToken.symbol)||''};
+  return {apy, util, availUsd, supplied, frozen:!!r.isFrozen, paused:!!r.isPaused, mkt:r._mkt||null, sym:(r.underlyingToken&&r.underlyingToken.symbol)||''};
 }
 
 async function loadAll(){
@@ -205,10 +217,16 @@ async function loadAll(){
   }));
   return POSITIONS.map(pos=>{
     const names = [pos.symbol, ...(pos.alt||[])].map(s=>s.toUpperCase());
-    // замороженные и приостановленные пулы тоже показываем; если есть активный пул того же токена, он в приоритете
+    // берём только основной (Core) рынок; замороженные и приостановленные пулы тоже показываем.
+    // Если API не отдал адрес рынка, берём самый крупный пул токена (основной рынок всегда самый большой).
     const cands = (data[pos.chainId]||[]).filter(r=>r.underlyingToken && names.includes(r.underlyingToken.symbol.toUpperCase())).map(parseReserve);
-    cands.sort((a,b)=>(Number(a.paused)-Number(b.paused)) || (Number(a.frozen)-Number(b.frozen)) || ((b.supplied||b.availUsd||0)-(a.supplied||a.availUsd||0)));
-    const c = cands[0];
+    const core = cands.filter(x=>isCore(x, pos.chainId));
+    const size = x => x.supplied||x.availUsd||0;
+    const pool = core.length ? core : cands;
+    pool.sort(core.length
+      ? (a,b)=>(Number(a.paused)-Number(b.paused)) || (Number(a.frozen)-Number(b.frozen)) || (size(b)-size(a))
+      : (a,b)=>size(b)-size(a));
+    const c = pool[0];
     const m = meta[pos.chainId]||{tokens:{}};
     const sym = c ? c.sym : pos.symbol;
     const t = m.tokens[sym.toUpperCase()] || m.tokens[pos.symbol.toUpperCase()] || {};
@@ -315,7 +333,7 @@ function render(rows, ts, stale){
       <a class="asset" href="${esc(link(r))}" target="_blank" rel="noopener">${icon}
         <span class="txt">
           <span class="top"><span class="sym">${esc(name)}</span><span class="pill">APY ${fmt(r.apy)}%</span>${r.paused?'<span class="tag bad">пауза</span>':(r.frozen?'<span class="tag">заморожен</span>':'')}</span>
-          <span class="sub">${ch.name}</span>
+          <span class="sub">${ch.name}${r.mkt && r.mkt.name ? ' · '+esc(r.mkt.name) : ''}</span>
         </span>
       </a>
       <div class="right"><div class="util">util ${fmt(r.util,1)}%</div><div class="avail">свободно ${money(r.availUsd)}</div></div>
