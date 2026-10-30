@@ -29,6 +29,8 @@
   .top{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
   .sym{font-weight:700;font-size:18px}
   .pill{background:var(--pill);color:#fff;font-weight:700;font-size:13px;border-radius:999px;padding:2px 10px;white-space:nowrap}
+  .tag{background:#2a3b55;color:#9cc4ff;font-weight:600;font-size:12px;border-radius:999px;padding:2px 9px;white-space:nowrap}
+  .tag.bad{background:#4a2326;color:#ff9a9a}
   .sub{color:var(--mut);font-size:13px;margin-top:3px}
   .right{text-align:right;flex:none}
   .util{font-size:14px;font-weight:600}
@@ -61,10 +63,10 @@
 // share = ваша доля позиции в % (нужна только для средневзвешенного APY, в строках не показывается)
 // track = окончание ссылки на aavetracker.com/markets/<сеть>/<track>/
 const POSITIONS = [
-  {chainId:43114, symbol:'USDC', track:'usdc',       share:41.41},
+  {chainId:43114, symbol:'USDC', track:'usdc',       share:41.39},
   {chainId:10,    symbol:'USDC', track:'usdc-0b2c',  share:11.92},
   {chainId:1,     symbol:'USDC', track:'usdc',       share:11.92},
-  {chainId:1,     symbol:'USDG', track:'usdg',       share:9.43},
+  {chainId:1,     symbol:'USDG', track:'usdg',       share:10.69},
   {chainId:137,   symbol:'USDT', track:'usdt0', alt:['USDT0','USD₮0'], share:11.93},
   {chainId:43114, symbol:'USDT', track:'usdt',       share:11.94},
 ];
@@ -191,7 +193,7 @@ function parseReserve(r){
   } else if(supplied && borrowed!=null){
     util = 100*borrowed/supplied;
   }
-  return {apy, util, availUsd, supplied, sym:(r.underlyingToken&&r.underlyingToken.symbol)||''};
+  return {apy, util, availUsd, supplied, frozen:!!r.isFrozen, paused:!!r.isPaused, sym:(r.underlyingToken&&r.underlyingToken.symbol)||''};
 }
 
 async function loadAll(){
@@ -203,8 +205,9 @@ async function loadAll(){
   }));
   return POSITIONS.map(pos=>{
     const names = [pos.symbol, ...(pos.alt||[])].map(s=>s.toUpperCase());
-    const cands = (data[pos.chainId]||[]).filter(r=>r.underlyingToken && names.includes(r.underlyingToken.symbol.toUpperCase()) && !r.isFrozen && !r.isPaused).map(parseReserve);
-    cands.sort((a,b)=>((b.supplied||b.availUsd||0)-(a.supplied||a.availUsd||0)));
+    // замороженные и приостановленные пулы тоже показываем; если есть активный пул того же токена, он в приоритете
+    const cands = (data[pos.chainId]||[]).filter(r=>r.underlyingToken && names.includes(r.underlyingToken.symbol.toUpperCase())).map(parseReserve);
+    cands.sort((a,b)=>(Number(a.paused)-Number(b.paused)) || (Number(a.frozen)-Number(b.frozen)) || ((b.supplied||b.availUsd||0)-(a.supplied||a.availUsd||0)));
     const c = cands[0];
     const m = meta[pos.chainId]||{tokens:{}};
     const sym = c ? c.sym : pos.symbol;
@@ -311,7 +314,7 @@ function render(rows, ts, stale){
     return `<div class="row ${cls}">
       <a class="asset" href="${esc(link(r))}" target="_blank" rel="noopener">${icon}
         <span class="txt">
-          <span class="top"><span class="sym">${esc(name)}</span><span class="pill">APY ${fmt(r.apy)}%</span></span>
+          <span class="top"><span class="sym">${esc(name)}</span><span class="pill">APY ${fmt(r.apy)}%</span>${r.paused?'<span class="tag bad">пауза</span>':(r.frozen?'<span class="tag">заморожен</span>':'')}</span>
           <span class="sub">${ch.name}</span>
         </span>
       </a>
