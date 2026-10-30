@@ -16,6 +16,15 @@ const POSITIONS = [
   {key:'43114-USDT', chainId:43114, names:['USDT']},
 ];
 
+// адреса основных (Core) рынков Aave V3: именно их ставки вы видите в приложении
+const CORE_POOL = {
+  1:     '0x87870bca3f3fd6335c3f4ce8392d69350b4fa4e2',
+  43114: '0x794a61358d6845594f94dc1db02a252b5b4814ad',
+  10:    '0x794a61358d6845594f94dc1db02a252b5b4814ad',
+  137:   '0x794a61358d6845594f94dc1db02a252b5b4814ad',
+  42161: '0x794a61358d6845594f94dc1db02a252b5b4814ad',
+};
+
 // от полного запроса к простому, если какое-то поле не поддерживается
 const VARIANTS = [
   `supplyInfo{apy{formatted} total{value}} borrowInfo{availableLiquidity{usd}}`,
@@ -43,32 +52,39 @@ async function gql(query) {
 async function fetchChain(chainId) {
   let lastErr;
   for (const v of VARIANTS) {
-    try {
-      const q = `{ markets(request:{chainIds:[${chainId}]}) { reserves { underlyingToken{symbol} ${v} isFrozen isPaused } } }`;
-      const d = await gql(q);
-      return d.markets.flatMap(m => m.reserves);
-    } catch (e) { lastErr = e; }
+    for (const mf of ['name address', '']) { // сначала с названием и адресом рынка, если API их не отдаёт, без них
+      try {
+        const q = `{ markets(request:{chainIds:[${chainId}]}) { ${mf} reserves { underlyingToken{symbol} ${v} isFrozen isPaused } } }`;
+        const d = await gql(q);
+        return d.markets.flatMap(m => m.reserves.map(r => ({...r, _mkt: {name: m.name || '', address: String(m.address || '').toLowerCase()}})));
+      } catch (e) { lastErr = e; }
+    }
   }
   throw lastErr;
 }
 
-// та же логика выбора, что на странице: нужный токен; активный пул в приоритете, затем самый крупный.
-// Замороженные и приостановленные пулы тоже пишем: проценты в них продолжают начисляться.
-function pick(reserves, names) {
+// та же логика выбора, что на странице: нужный токен, только основной (Core) рынок;
+// активный пул в приоритете, затем самый крупный. Замороженные и приостановленные пулы тоже пишем:
+// проценты в них продолжают начисляться. Если API не отдал адрес рынка, берём самый крупный пул токена.
+function pick(reserves, names, chainId) {
   const want = names.map(s => s.toUpperCase());
-  const c = reserves
+  const all = reserves
     .filter(r => r.underlyingToken && want.includes(r.underlyingToken.symbol.toUpperCase()))
     .map(r => {
       const s = r.supplyInfo || {}, b = r.borrowInfo || {};
+      const m = r._mkt || {};
       return {
         apy: num(s.apy && s.apy.formatted),
         size: num(s.total && s.total.value) || num(b.availableLiquidity && b.availableLiquidity.usd) || 0,
         off: (r.isPaused ? 2 : 0) + (r.isFrozen ? 1 : 0),
+        core: m.address === CORE_POOL[chainId] || /core/i.test(m.name || ''),
       };
     })
-    .filter(x => x.apy != null)
-    .sort((a, b) => (a.off - b.off) || (b.size - a.size));
-  return c.length ? c[0].apy : null;
+    .filter(x => x.apy != null);
+  const core = all.filter(x => x.core);
+  const pool = core.length ? core : all;
+  pool.sort(core.length ? (a, b) => (a.off - b.off) || (b.size - a.size) : (a, b) => b.size - a.size);
+  return pool.length ? pool[0].apy : null;
 }
 
 function write(hist) {
@@ -89,7 +105,7 @@ async function main() {
   const vals = {};
   let ok = 0;
   for (const p of POSITIONS) {
-    const apy = data[p.chainId] ? pick(data[p.chainId], p.names) : null;
+    const apy = data[p.chainId] ? pick(data[p.chainId], p.names, p.chainId) : null;
     vals[p.key] = apy;
     if (apy != null) ok++;
     console.log(p.key, apy);
