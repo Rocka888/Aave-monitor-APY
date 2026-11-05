@@ -11,7 +11,7 @@ const POSITIONS = [
   {key:'43114-USDC', chainId:43114, names:['USDC']},
   {key:'10-USDC',    chainId:10,    names:['USDC']},
   {key:'1-USDC',     chainId:1,     names:['USDC']},
-  {key:'1-USDG',     chainId:1,     names:['USDG']},
+  {key:'1-USDT',     chainId:1,     names:['USDT']},
   {key:'137-USDT',   chainId:137,   names:['USDT','USDT0','USD₮0']},
   {key:'43114-USDT', chainId:43114, names:['USDT']},
 ];
